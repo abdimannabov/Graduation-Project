@@ -4,6 +4,7 @@ import 'blocs/authentication_bloc/authentication_bloc.dart';
 import 'blocs/sign_in_bloc/sign_in_bloc.dart';
 import 'screens/auth/welcome_screen.dart';
 import 'screens/home/home_screen.dart';
+import 'screens/scan_screen.dart';
 
 class MyAppView extends StatelessWidget {
   const MyAppView({super.key});
@@ -11,6 +12,10 @@ class MyAppView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      initialRoute: '/',
+      routes: {
+        '/scan': (context) => const ScanScreen(),
+      },
       debugShowCheckedModeBanner: false,
       title: 'Firebase Auth',
       theme: ThemeData(
