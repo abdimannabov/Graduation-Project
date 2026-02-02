@@ -6,6 +6,8 @@ import 'package:network_info_plus/network_info_plus.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'dart:developer';
 import 'dart:io';
+import '../services/face_id_service.dart';
+import 'package:smart_attendance/screens/auth/face_id_setup_screen.dart';
 
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key});
@@ -18,11 +20,37 @@ class _ScanScreenState extends State<ScanScreen> {
   final GlobalKey qrKey = GlobalKey(debugLabel: 'QR');
   QRViewController? controller;
   bool isScanned = false;
+  final FaceIdService _faceIdService = FaceIdService();
+  bool _biometricEnrolled = false;
+  bool _biometricAvailable = false;
 
   @override
   void dispose() {
     controller?.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometricSetup();
+  }
+
+  Future<void> _checkBiometricSetup() async {
+    try {
+      final enrolled = await _faceIdService.hasFaceIdEnrolled();
+      final available = await _faceIdService.isFaceIdAvailable();
+      setState(() {
+        _biometricEnrolled = enrolled;
+        _biometricAvailable = available;
+      });
+    } catch (e) {
+      log('Error checking biometric setup: $e');
+      setState(() {
+        _biometricEnrolled = false;
+        _biometricAvailable = false;
+      });
+    }
   }
 
   /// Get current device ID for anti-cheating verification
@@ -278,7 +306,74 @@ class _ScanScreenState extends State<ScanScreen> {
         children: <Widget>[
           Expanded(
             flex: 4,
-            child: QRView(key: qrKey, onQRViewCreated: _onQRViewCreated),
+            child: _biometricAvailable && _biometricEnrolled
+                ? QRView(key: qrKey, onQRViewCreated: _onQRViewCreated)
+                : Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.red.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: Colors.red.withOpacity(0.3),
+                            ),
+                          ),
+                          child: Column(
+                            children: const [
+                              Icon(Icons.lock, size: 48, color: Colors.red),
+                              SizedBox(height: 12),
+                              Text(
+                                'M A N D A T O R Y — Face ID / Fingerprint required',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.red,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                'You cannot use the camera or scan QR codes until you enroll Face ID or Fingerprint on this device. This is enforced to prevent attendance fraud and is not optional.',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.black87,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        ElevatedButton(
+                          onPressed: () async {
+                            // Navigate the user to enrollment screen
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const FaceIdSetupScreen(),
+                              ),
+                            );
+                            // Also try refreshing biometric state in case user enrolled elsewhere
+                            await _checkBiometricSetup();
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text('Enroll Face ID / Fingerprint'),
+                        ),
+                        const SizedBox(height: 8),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Cancel'),
+                        ),
+                      ],
+                    ),
+                  ),
           ),
           Expanded(
             flex: 1,

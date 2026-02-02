@@ -52,6 +52,12 @@ class FaceIdService {
     }
   }
 
+  /// Compatibility wrapper for older callers expecting `isFaceIdAvailable()`.
+  /// Returns true if any biometric is available (face or fingerprint).
+  Future<bool> isFaceIdAvailable() async {
+    return await isPreferredBiometricAvailable();
+  }
+
   /// Returns the preferred biometric type as a string: 'face' or 'fingerprint' or ''
   Future<String> _getPreferredBiometricType() async {
     try {
@@ -383,9 +389,6 @@ class FaceIdService {
 
   /// Generate unique token for Face ID enrollment
   /// This helps track if face ID was added from multiple devices
-  String _generateFaceIdDeviceToken() {
-    return 'face_${DateTime.now().millisecondsSinceEpoch}';
-  }
 
   /// Get current device ID (android id or ios identifierForVendor)
   Future<String> _getDeviceId() async {

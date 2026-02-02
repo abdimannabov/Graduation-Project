@@ -135,8 +135,8 @@ class _FaceIdSetupScreenState extends State<FaceIdSetupScreen> {
                     ),
                     const SizedBox(height: 12),
                     _buildInfoPoint(
-                      '✅ Extra Security Layer',
-                      'Prevents unauthorized access to your attendance',
+                      '⚠️ Mandatory Enrollment',
+                      'You must enroll Face ID or Fingerprint on this device. The app blocks camera scanning for attendance until you enroll. This is enforced to prevent attendance fraud and is not optional.',
                     ),
                     const SizedBox(height: 8),
                     _buildInfoPoint(
