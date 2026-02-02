@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper: Check if user is admin
+    function isAdmin() {
+      return isAuthenticated() &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Helper: Validate attendance timestamp (within last 2 hours, not in future)
+    function isValidTimestamp(timestamp) {
+      let now = request.time;
+      let twoHoursAgo = now - duration.time(2 * 60 * 60, 's');
+      return timestamp <= now && timestamp >= twoHoursAgo;
+    }
+
+    // Users Collection - Device binding and profile
+    match /users/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isAuthenticated() &&
+                       request.auth.uid == userId &&
+                       request.resource.data.deviceId is string &&
+                       request.resource.data.email is string;
+      allow update: if isAuthenticated() &&
+                       request.auth.uid == userId &&
+                       // Allow deviceId to be set/updated on first write
+                       ((!resource.data.keys().hasAny(['deviceId'])) ||
+                        (resource.data.deviceId == request.resource.data.deviceId)) &&
+                       // Protect other fields
+                       resource.data.createdAt == request.resource.data.createdAt;
+      allow delete: if false; // Never allow deleting user records
+    }
+
+    // Valid QR Codes - Read only for all authenticated users
+    match /valid_qrs/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if false; // Only via admin portal or backend
+    }
+
+    // Attendance Records - Main attendance logging with validation
+    match /attendance/{userId}/records/{recordId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isAuthenticated() &&
+                       request.auth.uid == userId &&
+                       // Mandatory fields validation
+                       request.resource.data.qr_value is string &&
+                       request.resource.data.qr_value != '' &&
+                       request.resource.data.ip_address is string &&
+                       request.resource.data.ip_address != '' &&
+                       request.resource.data.timestamp is timestamp &&
+                       request.resource.data.device_verified is bool &&
+                       request.resource.data.device_verified == true &&
+                       request.resource.data.status is string &&
+                       request.resource.data.status == 'Present' &&
+                       // Timestamp must be recent (within 2 hours)
+                       isValidTimestamp(request.resource.data.timestamp) &&
+                       // Device binding: client must include deviceId and it must match the stored deviceId
+                       request.resource.data.deviceId is string &&
+                       request.resource.data.deviceId ==
+                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.deviceId;
+
+      allow update: if false; // Never allow updating attendance records
+      allow delete: if false; // Never allow deleting attendance records
+    }
+
+    // Attendance Logs - Audit trail (read by admins, write by app)
+    match /attendance_logs/{document=**} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() &&
+                       request.resource.data.userId == request.auth.uid &&
+                       request.resource.data.timestamp is timestamp &&
+                       isValidTimestamp(request.resource.data.timestamp) &&
+                       // Device binding: ensure log includes deviceId and it matches stored deviceId
+                       request.resource.data.deviceId is string &&
+                       request.resource.data.deviceId ==
+                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.deviceId;
+      allow update, delete: if false;
+    }
+
+    // Suspicious Activity Logs - Security audit trail
+    match /suspicious_activity_logs/{document=**} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated(); // App logs suspicious attempts
+      allow update, delete: if false;
+    }
+
+    // Default deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

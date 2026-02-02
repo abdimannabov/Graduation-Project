@@ -57,6 +57,7 @@ dependencies:
   user_repository:
     path: packages/user_repository
   fluttertoast: ^9.0.0
+  local_auth: ^2.3.0
 
 dev_dependencies:
   flutter_test:

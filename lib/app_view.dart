@@ -5,6 +5,8 @@ import 'blocs/sign_in_bloc/sign_in_bloc.dart';
 import 'screens/auth/welcome_screen.dart';
 import 'screens/home/home_screen.dart';
 import 'screens/scan_screen.dart';
+import 'screens/auth/face_id_setup_screen.dart';
+import 'screens/settings/account_settings_screen.dart';
 
 class MyAppView extends StatelessWidget {
   const MyAppView({super.key});
@@ -15,6 +17,8 @@ class MyAppView extends StatelessWidget {
       initialRoute: '/',
       routes: {
         '/scan': (context) => const ScanScreen(),
+        '/faceIdSetup': (context) => const FaceIdSetupScreen(),
+        '/settings': (context) => const AccountSettingsScreen(),
       },
       debugShowCheckedModeBanner: false,
       title: 'Firebase Auth',

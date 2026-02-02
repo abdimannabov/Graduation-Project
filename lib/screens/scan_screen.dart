@@ -223,6 +223,8 @@ class _ScanScreenState extends State<ScanScreen> {
       }
 
       // All security checks passed — record attendance
+      final deviceId = await _getDeviceId();
+      log('📱 Final device ID used for attendance: $deviceId');
       final attendanceRef = FirebaseFirestore.instance
           .collection('attendance')
           .doc(user.uid)
@@ -230,12 +232,13 @@ class _ScanScreenState extends State<ScanScreen> {
 
       await attendanceRef.add({
         'qr_value': code,
-        'timestamp': DateTime.now(),
+        'timestamp': FieldValue.serverTimestamp(),
         'email': user.email,
         'ip_verified': true,
         'ip_address': currentIp,
         'status': 'Present',
         'device_verified': true,
+        'deviceId': deviceId,
       });
 
       // Also log to attendance_logs for admin audit
@@ -243,11 +246,12 @@ class _ScanScreenState extends State<ScanScreen> {
         'userId': user.uid,
         'email': user.email,
         'qr_code': code,
-        'timestamp': DateTime.now(),
+        'timestamp': FieldValue.serverTimestamp(),
         'ip_address': currentIp,
         'device_verified': true,
         'location_verified': true,
         'status': 'Present',
+        'deviceId': deviceId,
       });
 
       _showMessage('Attendance recorded ✅');

@@ -94,8 +94,10 @@ service cloud.firestore {
                        request.resource.data.status == 'Present' &&
                        // Timestamp must be recent (within 2 hours)
                        isValidTimestamp(request.resource.data.timestamp) &&
-                       // Device binding: verify deviceId matches user's record
-                       get(/databases/$(database)/documents/users/$(request.auth.uid)).data.deviceId exists;
+                       // Device binding: client must include deviceId and it must match the stored deviceId
+                       request.resource.data.deviceId is string &&
+                       request.resource.data.deviceId ==
+                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.deviceId;
 
       allow update: if false; // Never allow updating attendance records
       allow delete: if false; // Never allow deleting attendance records
@@ -107,7 +109,11 @@ service cloud.firestore {
       allow create: if isAuthenticated() &&
                        request.resource.data.userId == request.auth.uid &&
                        request.resource.data.timestamp is timestamp &&
-                       isValidTimestamp(request.resource.data.timestamp);
+                       isValidTimestamp(request.resource.data.timestamp) &&
+                       // Device binding: ensure log includes deviceId and it matches stored deviceId
+                       request.resource.data.deviceId is string &&
+                       request.resource.data.deviceId ==
+                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.deviceId;
       allow update, delete: if false;
     }
 
