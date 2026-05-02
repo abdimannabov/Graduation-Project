@@ -59,10 +59,20 @@ class AuthenticationBloc
 
       if (!userDoc.exists) {
         print('[AuthenticationBloc] User document not found');
+        final creationTime = user.metadata.creationTime;
+        final isFreshSignup =
+            creationTime != null &&
+            DateTime.now().difference(creationTime).inMinutes < 2;
+        if (isFreshSignup) {
+          print(
+            '[AuthenticationBloc] Allowing fresh signup to finish profile creation',
+          );
+          return true;
+        }
         return false;
       }
 
-      final storedDeviceId = userDoc.get('deviceId') as String?;
+      final storedDeviceId = userDoc.data()?['deviceId'] as String?;
       print('[AuthenticationBloc] Stored device ID: $storedDeviceId');
 
       if (storedDeviceId == null) {

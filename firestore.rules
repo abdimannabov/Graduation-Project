@@ -33,8 +33,24 @@ service cloud.firestore {
                        ((!resource.data.keys().hasAny(['deviceId'])) ||
                         (resource.data.deviceId == request.resource.data.deviceId)) &&
                        // Protect other fields
-                       resource.data.createdAt == request.resource.data.createdAt;
+                       ((!resource.data.keys().hasAny(['createdAt'])) ||
+                        resource.data.createdAt == request.resource.data.createdAt);
       allow delete: if false; // Never allow deleting user records
+    }
+
+    // Device Binding Index - one device can create only one account.
+    // The document id is a sanitized device id. Clients may create their own
+    // binding during signup, but cannot overwrite or delete another binding.
+    match /device_bindings/{deviceId} {
+      allow read: if isAuthenticated() &&
+                    resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() &&
+                      !exists(/databases/$(database)/documents/device_bindings/$(deviceId)) &&
+                      request.resource.data.userId == request.auth.uid &&
+                      request.resource.data.deviceId is string &&
+                      request.resource.data.email is string &&
+                      request.resource.data.createdAt is timestamp;
+      allow update, delete: if false;
     }
 
     // Valid QR Codes - Read only for all authenticated users

@@ -82,7 +82,8 @@ class FaceIdService {
 
       if (!userDoc.exists) return false;
 
-      final faceIdEnrolled = userDoc.get('faceIdEnrolled') as bool? ?? false;
+      final faceIdEnrolled =
+          userDoc.data()?['faceIdEnrolled'] as bool? ?? false;
       print('[FaceIdService] ✅ Face ID enrolled status: $faceIdEnrolled');
 
       return faceIdEnrolled;
@@ -355,9 +356,9 @@ class FaceIdService {
       if (!userDoc.exists) return {};
 
       return {
-        'faceIdEnrolled': userDoc.get('faceIdEnrolled') ?? false,
-        'enrolledAt': userDoc.get('faceIdEnrolledAt'),
-        'removedAt': userDoc.get('faceIdRemovedAt'),
+        'faceIdEnrolled': userDoc.data()?['faceIdEnrolled'] ?? false,
+        'enrolledAt': userDoc.data()?['faceIdEnrolledAt'],
+        'removedAt': userDoc.data()?['faceIdRemovedAt'],
       };
     } catch (e) {
       print('❌ [FaceIdService] Error getting Face ID details: $e');
