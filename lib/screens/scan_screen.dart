@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:qr_code_scanner/qr_code_scanner.dart';
 
+import '../config/security_config.dart';
 import '../services/backend_api.dart';
 import '../services/face_id_service.dart';
 import 'auth/face_id_setup_screen.dart';
@@ -83,7 +84,7 @@ class _ScanScreenState extends State<ScanScreen> {
           .doc(userId)
           .get();
 
-      if (!userDoc.exists) return false;
+      if (!userDoc.exists) return SecurityConfig.allowUnboundOrLegacyDevices;
 
       final storedDeviceId = userDoc.data()?['deviceId'] as String?;
       if (storedDeviceId != null && storedDeviceId != deviceId) {
@@ -100,10 +101,14 @@ class _ScanScreenState extends State<ScanScreen> {
 
         return false;
       }
+      if (storedDeviceId == null &&
+          SecurityConfig.allowUnboundOrLegacyDevices) {
+        return true;
+      }
       return true;
     } catch (e) {
       log('Error verifying device binding: $e');
-      return false;
+      return SecurityConfig.allowUnboundOrLegacyDevices;
     }
   }
 
@@ -246,7 +251,9 @@ class _ScanScreenState extends State<ScanScreen> {
         children: <Widget>[
           Expanded(
             flex: 4,
-            child: _biometricAvailable && _biometricEnrolled
+            child:
+                (_biometricAvailable && _biometricEnrolled) ||
+                    SecurityConfig.allowScanWithoutBiometricEnrollment
                 ? QRView(key: qrKey, onQRViewCreated: _onQRViewCreated)
                 : Padding(
                     padding: const EdgeInsets.all(24.0),

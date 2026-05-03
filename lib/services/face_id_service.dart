@@ -1,12 +1,12 @@
 import 'dart:io';
 
-import 'package:local_auth/local_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:local_auth/local_auth.dart';
 
-/// Service for managing Face ID authentication
-/// Ensures only ONE face ID per account to prevent cheating
+import '../config/security_config.dart';
+
 class FaceIdService {
   static final FaceIdService _instance = FaceIdService._internal();
 
@@ -20,46 +20,45 @@ class FaceIdService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  /// Check if device supports biometric authentication
   Future<bool> isBiometricAvailable() async {
+    if (SecurityConfig.bypassBiometricVerification) return true;
+
     try {
       return await _localAuth.canCheckBiometrics;
     } catch (e) {
-      print('❌ [FaceIdService] Error checking biometric availability: $e');
+      print('[FaceIdService] Error checking biometric availability: $e');
       return false;
     }
   }
 
-  /// Get available biometric types on device
   Future<List<BiometricType>> getAvailableBiometrics() async {
     try {
       return await _localAuth.getAvailableBiometrics();
     } catch (e) {
-      print('❌ [FaceIdService] Error getting available biometrics: $e');
+      print('[FaceIdService] Error getting available biometrics: $e');
       return [];
     }
   }
 
-  /// Check if a biometric (Face or Fingerprint) is available.
-  /// Prefer face when available on device; otherwise fingerprint or other biometric.
   Future<bool> isPreferredBiometricAvailable() async {
+    if (SecurityConfig.bypassBiometricVerification) return true;
+
     try {
       final biometrics = await getAvailableBiometrics();
       return biometrics.isNotEmpty;
     } catch (e) {
-      print('❌ [FaceIdService] Error checking biometric availability: $e');
+      print('[FaceIdService] Error checking biometric availability: $e');
       return false;
     }
   }
 
-  /// Compatibility wrapper for older callers expecting `isFaceIdAvailable()`.
-  /// Returns true if any biometric is available (face or fingerprint).
   Future<bool> isFaceIdAvailable() async {
     return await isPreferredBiometricAvailable();
   }
 
-  /// Returns the preferred biometric type as a string: 'face' or 'fingerprint' or ''
   Future<String> _getPreferredBiometricType() async {
+    if (SecurityConfig.bypassBiometricVerification) return 'debug_bypass';
+
     try {
       final biometrics = await getAvailableBiometrics();
       if (biometrics.contains(BiometricType.face)) return 'face';
@@ -67,34 +66,32 @@ class FaceIdService {
       if (biometrics.isNotEmpty) return biometrics.first.toString();
       return '';
     } catch (e) {
-      print('❌ [FaceIdService] Error getting preferred biometric: $e');
+      print('[FaceIdService] Error getting preferred biometric: $e');
       return '';
     }
   }
 
-  /// Check if user already has Face ID enrolled in app
   Future<bool> hasFaceIdEnrolled() async {
+    if (SecurityConfig.allowScanWithoutBiometricEnrollment) return true;
+
     try {
       final user = _auth.currentUser;
       if (user == null) return false;
 
       final userDoc = await _firestore.collection('users').doc(user.uid).get();
-
       if (!userDoc.exists) return false;
 
       final faceIdEnrolled =
           userDoc.data()?['faceIdEnrolled'] as bool? ?? false;
-      print('[FaceIdService] ✅ Face ID enrolled status: $faceIdEnrolled');
+      print('[FaceIdService] Face ID enrolled status: $faceIdEnrolled');
 
       return faceIdEnrolled;
     } catch (e) {
-      print('❌ [FaceIdService] Error checking Face ID enrollment: $e');
+      print('[FaceIdService] Error checking Face ID enrollment: $e');
       return false;
     }
   }
 
-  /// Setup Face ID for current user (First time enrollment)
-  /// ✅ STRICT: Only allows ONE face ID per account
   Future<Map<String, dynamic>> setupFaceId() async {
     try {
       final user = _auth.currentUser;
@@ -102,27 +99,22 @@ class FaceIdService {
         return {'success': false, 'error': 'No user logged in'};
       }
 
-      print('\n🔐 === FACE ID SETUP STARTED ===');
-      print('👤 User: ${user.email}');
-
-      // ✅ CRITICAL: Check if Face ID already enrolled
-      final alreadyEnrolled = await hasFaceIdEnrolled();
+      final alreadyEnrolled = await _readFaceIdEnrollmentFlag(user.uid);
       if (alreadyEnrolled) {
-        print('❌ Face ID already enrolled for this account');
         return {
           'success': false,
           'error': 'Face ID already enrolled',
           'reason':
-              'You can only enroll one face per account to prevent cheating',
+              'You can only enroll one biometric profile per account to prevent cheating',
         };
       }
 
-      print('✅ No existing Face ID found - proceeding with enrollment');
+      if (SecurityConfig.bypassBiometricVerification) {
+        return await _saveDebugBiometricEnrollment(user);
+      }
 
-      // Check if any biometric is available (Face or Fingerprint)
       final isBiometricAvailable = await isPreferredBiometricAvailable();
       if (!isBiometricAvailable) {
-        print('❌ No biometric available on this device');
         return {
           'success': false,
           'error': 'Biometric not available',
@@ -131,13 +123,9 @@ class FaceIdService {
       }
 
       final biometricType = await _getPreferredBiometricType();
-      print('✅ Biometric available on device: $biometricType');
-
-      // Authenticate with Face ID to confirm it works
-      print('🔄 Requesting Face ID authentication...');
       final authenticated = await _localAuth.authenticate(
         localizedReason:
-            'Scan your face to enroll for attendance authentication',
+            'Scan your face or fingerprint to enroll attendance authentication',
         options: const AuthenticationOptions(
           stickyAuth: true,
           biometricOnly: true,
@@ -145,39 +133,25 @@ class FaceIdService {
       );
 
       if (!authenticated) {
-        print('❌ Face ID authentication failed or cancelled');
         return {
           'success': false,
-          'error': 'Face ID authentication failed',
-          'reason': 'Could not verify your face. Please try again.',
+          'error': 'Biometric authentication failed',
+          'reason': 'Could not verify your biometric. Please try again.',
         };
       }
 
-      print('✅ Face ID authentication successful!');
-
-      // Get current device id to bind enrollment to this device
       final deviceId = await _getDeviceId();
-
-      final enrollmentData = {
+      await _firestore.collection('users').doc(user.uid).set({
         'faceIdEnrolled': true,
         'faceIdEnrolledAt': FieldValue.serverTimestamp(),
         'faceIdDeviceId': deviceId,
         'biometricType': biometricType,
         'enrollmentAttempts': FieldValue.increment(1),
-      };
+      }, SetOptions(merge: true));
 
-      // Save to Firestore (merge to avoid failing if doc missing)
-      print('💾 Saving Face ID enrollment to Firestore...');
-      await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .set(enrollmentData, SetOptions(merge: true));
-
-      print('✅ Face ID enrollment successful!\n');
-
-      return {'success': true, 'message': 'Face ID enrolled successfully'};
+      return {'success': true, 'message': 'Biometric enrolled successfully'};
     } on Exception catch (e) {
-      print('❌ [FaceIdService] Exception during Face ID setup: $e');
+      print('[FaceIdService] Exception during biometric setup: $e');
       return {
         'success': false,
         'error': 'Setup failed',
@@ -186,8 +160,6 @@ class FaceIdService {
     }
   }
 
-  /// Verify Face ID for attendance QR scan
-  /// ✅ STRICT: Must match enrolled face ID
   Future<Map<String, dynamic>> verifyFaceId() async {
     try {
       final user = _auth.currentUser;
@@ -195,26 +167,24 @@ class FaceIdService {
         return {'success': false, 'error': 'No user logged in'};
       }
 
-      print('\n🔐 === FACE ID VERIFICATION ===');
-      print('👤 User: ${user.email}');
+      if (SecurityConfig.bypassBiometricVerification) {
+        print(
+          '[FaceIdService] Debug/testing mode: biometric verification bypassed',
+        );
+        return {'success': true, 'message': 'Biometric verification bypassed'};
+      }
 
-      // Check if Face ID (or biometric) is enrolled
-      final enrolled = await hasFaceIdEnrolled();
+      final enrolled = await _readFaceIdEnrollmentFlag(user.uid);
       if (!enrolled) {
-        print('❌ Face ID not enrolled for this account');
         return {
           'success': false,
-          'error': 'Face ID not enrolled',
-          'reason': 'Please enroll Face ID first in account settings',
+          'error': 'Biometric not enrolled',
+          'reason': 'Please enroll biometric authentication first in settings',
         };
       }
 
-      print('✅ Face ID is enrolled');
-
-      // Check if any preferred biometric is available
       final available = await isPreferredBiometricAvailable();
       if (!available) {
-        print('❌ Biometric not available on device');
         return {
           'success': false,
           'error': 'Biometric unavailable',
@@ -222,11 +192,8 @@ class FaceIdService {
         };
       }
 
-      print('🔄 Requesting biometric scan...');
-
-      // Authenticate with Face ID
       final authenticated = await _localAuth.authenticate(
-        localizedReason: 'Scan your face to verify attendance',
+        localizedReason: 'Scan your face or fingerprint to verify attendance',
         options: const AuthenticationOptions(
           stickyAuth: true,
           biometricOnly: true,
@@ -234,9 +201,6 @@ class FaceIdService {
       );
 
       if (!authenticated) {
-        print('❌ Biometric verification failed');
-
-        // Log failed attempt
         await _logFaceIdAttempt(
           user.uid,
           'failed',
@@ -250,9 +214,6 @@ class FaceIdService {
         };
       }
 
-      print('✅ Biometric verification successful!');
-
-      // Verify this biometric verification comes from the enrolled device
       final userDoc = await _firestore.collection('users').doc(user.uid).get();
       if (userDoc.exists) {
         final storedDeviceId =
@@ -260,13 +221,10 @@ class FaceIdService {
                 as String?;
         final currentDeviceId = await _getDeviceId();
         if (storedDeviceId != null && storedDeviceId != currentDeviceId) {
-          print(
-            '❌ Biometric verified but device mismatch: stored=$storedDeviceId, current=$currentDeviceId',
-          );
           await _logFaceIdAttempt(
             user.uid,
             'failed',
-            'Biometric verified on device that did not enroll Face ID',
+            'Biometric verified on device that did not enroll it',
           );
 
           return {
@@ -278,7 +236,6 @@ class FaceIdService {
         }
       }
 
-      // Log successful verification
       await _logFaceIdAttempt(
         user.uid,
         'success',
@@ -287,14 +244,14 @@ class FaceIdService {
 
       return {'success': true, 'message': 'Biometric verified successfully'};
     } on Exception catch (e) {
-      print('❌ [FaceIdService] Exception during Face ID verification: $e');
+      print('[FaceIdService] Exception during biometric verification: $e');
 
       final user = _auth.currentUser;
       if (user != null) {
         await _logFaceIdAttempt(
           user.uid,
           'error',
-          'Face ID verification error: $e',
+          'Biometric verification error: $e',
         );
       }
 
@@ -306,8 +263,6 @@ class FaceIdService {
     }
   }
 
-  /// Remove Face ID enrollment (for account settings)
-  /// ✅ User can disable Face ID but must verify with Face ID first
   Future<Map<String, dynamic>> removeFaceId() async {
     try {
       final user = _auth.currentUser;
@@ -315,28 +270,21 @@ class FaceIdService {
         return {'success': false, 'error': 'No user logged in'};
       }
 
-      print('\n🔐 === REMOVING FACE ID ENROLLMENT ===');
-      print('👤 User: ${user.email}');
-
-      // First verify with Face ID before removing
-      final verified = await verifyFaceId();
-      if (!verified['success']) {
-        print('❌ Face ID verification failed - cannot remove enrollment');
-        return verified;
+      if (!SecurityConfig.bypassBiometricVerification) {
+        final verified = await verifyFaceId();
+        if (!verified['success']) {
+          return verified;
+        }
       }
 
-      // Remove Face ID enrollment
-      print('🗑️ Removing Face ID enrollment...');
       await _firestore.collection('users').doc(user.uid).update({
         'faceIdEnrolled': false,
         'faceIdRemovedAt': FieldValue.serverTimestamp(),
       });
 
-      print('✅ Face ID enrollment removed successfully!\n');
-
-      return {'success': true, 'message': 'Face ID enrollment removed'};
+      return {'success': true, 'message': 'Biometric enrollment removed'};
     } on Exception catch (e) {
-      print('❌ [FaceIdService] Exception during Face ID removal: $e');
+      print('[FaceIdService] Exception during biometric removal: $e');
       return {
         'success': false,
         'error': 'Removal failed',
@@ -345,14 +293,12 @@ class FaceIdService {
     }
   }
 
-  /// Get Face ID enrollment details for user
   Future<Map<String, dynamic>> getFaceIdDetails() async {
     try {
       final user = _auth.currentUser;
       if (user == null) return {};
 
       final userDoc = await _firestore.collection('users').doc(user.uid).get();
-
       if (!userDoc.exists) return {};
 
       return {
@@ -361,12 +307,33 @@ class FaceIdService {
         'removedAt': userDoc.data()?['faceIdRemovedAt'],
       };
     } catch (e) {
-      print('❌ [FaceIdService] Error getting Face ID details: $e');
+      print('[FaceIdService] Error getting biometric details: $e');
       return {};
     }
   }
 
-  /// ✅ STRICT: Log all Face ID attempts for audit trail
+  Future<bool> _readFaceIdEnrollmentFlag(String userId) async {
+    final userDoc = await _firestore.collection('users').doc(userId).get();
+    if (!userDoc.exists) return false;
+    return userDoc.data()?['faceIdEnrolled'] as bool? ?? false;
+  }
+
+  Future<Map<String, dynamic>> _saveDebugBiometricEnrollment(User user) async {
+    final deviceId = await _getDeviceId();
+    await _firestore.collection('users').doc(user.uid).set({
+      'faceIdEnrolled': true,
+      'faceIdEnrolledAt': FieldValue.serverTimestamp(),
+      'faceIdDeviceId': deviceId,
+      'biometricType': 'debug_bypass',
+      'enrollmentAttempts': FieldValue.increment(1),
+    }, SetOptions(merge: true));
+
+    return {
+      'success': true,
+      'message': 'Biometric enrollment enabled for debug/testing mode',
+    };
+  }
+
   Future<void> _logFaceIdAttempt(
     String userId,
     String status,
@@ -376,22 +343,15 @@ class FaceIdService {
       await _firestore.collection('face_id_logs').add({
         'userId': userId,
         'email': _auth.currentUser?.email,
-        'status': status, // 'success', 'failed', 'error'
+        'status': status,
         'details': details,
         'timestamp': FieldValue.serverTimestamp(),
       });
-
-      print('✅ Face ID attempt logged');
     } catch (e) {
-      print('⚠️ Error logging Face ID attempt: $e');
-      // Don't fail the main operation if logging fails
+      print('[FaceIdService] Error logging biometric attempt: $e');
     }
   }
 
-  /// Generate unique token for Face ID enrollment
-  /// This helps track if face ID was added from multiple devices
-
-  /// Get current device ID (android id or ios identifierForVendor)
   Future<String> _getDeviceId() async {
     try {
       final deviceInfo = DeviceInfoPlugin();
@@ -403,7 +363,7 @@ class FaceIdService {
         return info.identifierForVendor ?? 'ios_unknown';
       }
     } catch (e) {
-      print('⚠️ [FaceIdService] Error getting device ID: $e');
+      print('[FaceIdService] Error getting device ID: $e');
     }
     return 'unknown_device';
   }

@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:bloc/bloc.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:equatable/equatable.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:user_repository/user_repository.dart';
+
+import '../../config/security_config.dart';
+
 part 'authentication_event.dart';
 part 'authentication_state.dart';
 
@@ -19,74 +23,51 @@ class AuthenticationBloc
     _userSubscription = userRepository.user.listen((user) {
       add(AuthenticationUserChanged(user));
     });
+
     on<AuthenticationUserChanged>((event, emit) async {
-      if (event.user != null) {
-        // ✅ VERIFY DEVICE BINDING BEFORE ALLOWING AUTHENTICATED STATE
-        final isDeviceValid = await _verifyDeviceBinding(event.user!);
-
-        if (!isDeviceValid) {
-          print(
-            '[AuthenticationBloc] Device verification failed - forcing sign out',
-          );
-          await FirebaseAuth.instance.signOut();
-          emit(const AuthenticationState.unauthenticated());
-          return;
-        }
-
-        emit(AuthenticationState.authenticated(event.user!));
-      } else {
+      final user = event.user;
+      if (user == null) {
         emit(const AuthenticationState.unauthenticated());
+        return;
       }
+
+      if (SecurityConfig.allowUnboundOrLegacyDevices) {
+        emit(AuthenticationState.authenticated(user));
+        return;
+      }
+
+      final isDeviceValid = await _verifyDeviceBinding(user);
+      if (!isDeviceValid) {
+        print('[AuthenticationBloc] Device verification failed - signing out');
+        await FirebaseAuth.instance.signOut();
+        emit(const AuthenticationState.unauthenticated());
+        return;
+      }
+
+      emit(AuthenticationState.authenticated(user));
     });
   }
 
-  /// Verify that the current device ID matches the stored device ID
   Future<bool> _verifyDeviceBinding(User user) async {
     try {
-      print(
-        '[AuthenticationBloc] Verifying device binding for user: ${user.email}',
-      );
-
-      // Get current device ID
       final currentDeviceId = await _getDeviceId();
-      print('[AuthenticationBloc] Current device ID: $currentDeviceId');
-
-      // Get stored device ID from Firestore
       final userDoc = await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
           .get();
 
       if (!userDoc.exists) {
-        print('[AuthenticationBloc] User document not found');
         final creationTime = user.metadata.creationTime;
         final isFreshSignup =
             creationTime != null &&
             DateTime.now().difference(creationTime).inMinutes < 2;
-        if (isFreshSignup) {
-          print(
-            '[AuthenticationBloc] Allowing fresh signup to finish profile creation',
-          );
-          return true;
-        }
-        return false;
+        return isFreshSignup;
       }
 
       final storedDeviceId = userDoc.data()?['deviceId'] as String?;
-      print('[AuthenticationBloc] Stored device ID: $storedDeviceId');
+      if (storedDeviceId == null) return false;
 
-      if (storedDeviceId == null) {
-        print('[AuthenticationBloc] No stored device ID found');
-        return false;
-      }
-
-      // Compare device IDs
       if (currentDeviceId != storedDeviceId) {
-        print(
-          '[AuthenticationBloc] ❌ DEVICE MISMATCH: Current=$currentDeviceId, Stored=$storedDeviceId',
-        );
-
-        // Log suspicious activity
         await FirebaseFirestore.instance
             .collection('suspicious_activity_logs')
             .add({
@@ -101,7 +82,6 @@ class AuthenticationBloc
         return false;
       }
 
-      print('[AuthenticationBloc] ✅ Device verification passed');
       return true;
     } catch (e) {
       print('[AuthenticationBloc] Error verifying device binding: $e');
@@ -109,7 +89,6 @@ class AuthenticationBloc
     }
   }
 
-  /// Get current device ID
   Future<String> _getDeviceId() async {
     try {
       final deviceInfo = DeviceInfoPlugin();
