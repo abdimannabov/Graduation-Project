@@ -1,0 +1,69 @@
+@baseUrl = http://localhost:5000
+@localNetworkHost = 192.168.1.8
+@teacherEmail = s.abdimannabov@newuu.uz
+@studentEmail = sohib13@gmail.com
+@teacherSecret = teacher_secret_123
+@attendanceId = 3
+@sessionId = 4
+@classroomBssid = AA:BB:CC:DD:EE:FF
+@wrongBssid = 11:22:33:44:55:66
+@moodleQrUrl = http://{{localNetworkHost}}/mod/attendance/attendance.php?sessid=11
+
+### 1) Check backend + Moodle connectivity
+GET {{baseUrl}}/api/moodle/ping
+
+### 2) (Optional) List Moodle attendance sessions for a course attendance instance
+GET {{baseUrl}}/api/attendance/sessions?attendanceId={{attendanceId}}
+
+### 3) Generate QR token (teacher flow, with BSSID constraint)
+# @name generateQr
+POST {{baseUrl}}/api/attendance/qr
+Content-Type: application/json
+x-user-email: {{teacherEmail}}
+x-teacher-secret: {{teacherSecret}}
+
+{
+  "attendanceId": {{attendanceId}},
+  "sessionId": {{sessionId}},
+  "wifiConstraint": {
+    "bssid": "{{classroomBssid}}"
+  }
+}
+
+> {% client.global.set("qrToken", response.body.qrToken); %}
+
+### 4) Mark attendance (student flow, matching BSSID) - expected success
+POST {{baseUrl}}/api/attendance/mark
+Content-Type: application/json
+x-user-email: {{studentEmail}}
+
+{
+  "qrToken": "{{qrToken}}",
+  "wifiData": {
+    "bssid": "{{classroomBssid}}"
+  }
+}
+
+### 5) Mark attendance with wrong BSSID - expected WIFI_MISMATCH
+POST {{baseUrl}}/api/attendance/mark
+Content-Type: application/json
+x-user-email: {{studentEmail}}
+
+{
+  "qrToken": "{{qrToken}}",
+  "wifiData": {
+    "bssid": "{{wrongBssid}}"
+  }
+}
+
+### 6) Mark attendance from a Moodle-generated attendance QR URL
+POST {{baseUrl}}/api/attendance/mark
+Content-Type: application/json
+x-user-email: {{studentEmail}}
+
+{
+  "qrToken": "{{moodleQrUrl}}",
+  "wifiData": {
+    "bssid": "{{classroomBssid}}"
+  }
+}
